@@ -137,7 +137,7 @@ foreach ($orderLines as $item) {
 $order_details .= "\nTotal: $" . number_format($total, 2) . "\n";
 
 // Send confirmation email to the store owner. Configure STORE_EMAIL as an env var.
-$to = getenv("STORE_EMAIL") ?: "your-email@example.com";
+$to = getenv("STORE_EMAIL") ?: "isaiahboss27@gmail.com";
 $subject = "New Showtime Sneakers Order #$orderId";
 $headers = "From: no-reply@showtimesneakers.com\r\n";
 $headers .= "Reply-To: " . $email . "\r\n";
