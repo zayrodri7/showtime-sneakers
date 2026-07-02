@@ -34,8 +34,8 @@ if (isset($_POST['cancel_order'])) {
 
         foreach ($items as $item) {
             $restoreStmt = $pdo->prepare("
-                UPDATE shoe_sizes 
-                SET stock = stock + ? 
+                UPDATE shoe_sizes
+                SET stock = stock + ?
                 WHERE shoe_id = ? AND size = ?
             ");
             $restoreStmt->execute([
@@ -76,16 +76,11 @@ if (isset($_POST['update_inventory'])) {
 }
 
 /* Get orders */
-$ordersStmt = $pdo->query("
-    SELECT * 
-    FROM orders 
-    ORDER BY created_at DESC
-");
-$orders = $ordersStmt->fetchAll(PDO::FETCH_ASSOC);
+$orders = $pdo->query("SELECT * FROM orders ORDER BY created_at DESC")->fetchAll(PDO::FETCH_ASSOC);
 
 /* Get inventory */
-$inventoryStmt = $pdo->query("
-    SELECT 
+$inventory = $pdo->query("
+    SELECT
         shoe_sizes.id AS size_id,
         shoes.name,
         shoes.price,
@@ -94,112 +89,30 @@ $inventoryStmt = $pdo->query("
     FROM shoe_sizes
     JOIN shoes ON shoe_sizes.shoe_id = shoes.id
     ORDER BY shoes.name ASC, shoe_sizes.size ASC
-");
-$inventory = $inventoryStmt->fetchAll(PDO::FETCH_ASSOC);
+")->fetchAll(PDO::FETCH_ASSOC);
 ?>
-
 <!DOCTYPE html>
 <html>
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Admin Dashboard</title>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            background: #f4f4f4;
-            padding: 30px;
-        }
-
-        h1, h2 {
-            color: #111;
-        }
-
-        .top-bar {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .logout {
-            background: red;
-            color: white;
-            padding: 10px 14px;
-            text-decoration: none;
-            border-radius: 6px;
-        }
-
-        .message {
-            background: #e8ffe8;
-            border: 1px solid #8bc58b;
-            padding: 12px;
-            margin: 20px 0;
-            border-radius: 6px;
-        }
-
-        .section {
-            background: white;
-            padding: 25px;
-            border-radius: 10px;
-            margin-top: 25px;
-            box-shadow: 0 3px 8px rgba(0,0,0,0.1);
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 15px;
-            background: white;
-        }
-
-        th, td {
-            padding: 12px;
-            border-bottom: 1px solid #ddd;
-            text-align: left;
-            vertical-align: top;
-        }
-
-        th {
-            background: #111;
-            color: white;
-        }
-
-        .cancel-btn {
-            background: red;
-            color: white;
-            border: none;
-            padding: 8px 12px;
-            cursor: pointer;
-            border-radius: 5px;
-        }
-
-        .cancelled {
-            color: red;
-            font-weight: bold;
-        }
-
-        .active {
-            color: green;
-            font-weight: bold;
-        }
-
-        input[type="number"] {
-            width: 70px;
-            padding: 7px;
-        }
-
-        .save-btn {
-            margin-top: 20px;
-            background: black;
-            color: white;
-            border: none;
-            padding: 12px 18px;
-            cursor: pointer;
-            border-radius: 6px;
-        }
-
-        .order-items {
-            margin: 0;
-            padding-left: 18px;
-        }
+        body { font-family: Arial, sans-serif; background: #f4f4f4; padding: 30px; }
+        h1, h2 { color: #111; }
+        .top-bar { display: flex; justify-content: space-between; align-items: center; }
+        .logout { background: red; color: white; padding: 10px 14px; text-decoration: none; border-radius: 6px; }
+        .message { background: #e8ffe8; border: 1px solid #8bc58b; padding: 12px; margin: 20px 0; border-radius: 6px; }
+        .section { background: white; padding: 25px; border-radius: 10px; margin-top: 25px; box-shadow: 0 3px 8px rgba(0,0,0,0.1); }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; background: white; }
+        th, td { padding: 12px; border-bottom: 1px solid #ddd; text-align: left; vertical-align: top; }
+        th { background: #111; color: white; }
+        .cancel-btn { background: red; color: white; border: none; padding: 8px 12px; cursor: pointer; border-radius: 5px; }
+        .cancelled { color: red; font-weight: bold; }
+        .active { color: green; font-weight: bold; }
+        input[type="number"] { width: 70px; padding: 7px; }
+        .save-btn { margin-top: 20px; background: black; color: white; border: none; padding: 12px 18px; cursor: pointer; border-radius: 6px; }
+        .order-items { margin: 0; padding-left: 18px; }
     </style>
 </head>
 <body>
@@ -210,9 +123,7 @@ $inventory = $inventoryStmt->fetchAll(PDO::FETCH_ASSOC);
 </div>
 
 <?php if ($message): ?>
-    <div class="message">
-        <?= htmlspecialchars($message) ?>
-    </div>
+    <div class="message"><?= htmlspecialchars($message) ?></div>
 <?php endif; ?>
 
 <div class="section">
@@ -237,7 +148,6 @@ $inventory = $inventoryStmt->fetchAll(PDO::FETCH_ASSOC);
                 $itemsStmt->execute([$order['id']]);
                 $items = $itemsStmt->fetchAll(PDO::FETCH_ASSOC);
                 ?>
-
                 <tr>
                     <td>
                         <strong>#<?= htmlspecialchars($order['id']) ?></strong><br>
@@ -266,9 +176,7 @@ $inventory = $inventoryStmt->fetchAll(PDO::FETCH_ASSOC);
                         </ul>
                     </td>
 
-                    <td>
-                        $<?= number_format($order['total'], 2) ?>
-                    </td>
+                    <td>$<?= number_format($order['total'], 2) ?></td>
 
                     <td>
                         <?php if ($order['status'] === "Cancelled"): ?>
@@ -289,7 +197,6 @@ $inventory = $inventoryStmt->fetchAll(PDO::FETCH_ASSOC);
                         <?php endif; ?>
                     </td>
                 </tr>
-
             <?php endforeach; ?>
         </table>
     <?php endif; ?>
@@ -313,12 +220,10 @@ $inventory = $inventoryStmt->fetchAll(PDO::FETCH_ASSOC);
                     <td>$<?= number_format($item['price'], 2) ?></td>
                     <td><?= htmlspecialchars($item['size']) ?></td>
                     <td>
-                        <input 
-                            type="number" 
-                            name="stock[<?= $item['size_id'] ?>]" 
-                            value="<?= htmlspecialchars($item['stock']) ?>" 
-                            min="0"
-                        >
+                        <input type="number"
+                               name="stock[<?= $item['size_id'] ?>]"
+                               value="<?= htmlspecialchars($item['stock']) ?>"
+                               min="0">
                     </td>
                 </tr>
             <?php endforeach; ?>

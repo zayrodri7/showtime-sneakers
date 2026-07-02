@@ -2,15 +2,15 @@
 session_start();
 require_once "db.php";
 
-// Remove one line (identified by "shoeId-size") from the cart
+// Remove one line item (identified by "shoeId-size").
 if (isset($_GET["remove"])) {
-    $key = $_GET["remove"];
+    $key = preg_replace('/[^0-9\-]/', '', $_GET["remove"]);
     unset($_SESSION["cart"][$key]);
     header("Location: cart.php");
     exit;
 }
 
-// Clear the whole cart
+// Clear the whole cart.
 if (isset($_GET["clear"])) {
     unset($_SESSION["cart"]);
     header("Location: cart.php");
@@ -18,30 +18,41 @@ if (isset($_GET["clear"])) {
 }
 
 $cart = $_SESSION["cart"] ?? [];
+$rows = [];
 $total = 0;
 
-// Pull current prices/names from the DB so the cart always reflects
-// real catalog data rather than whatever was stored client-side.
-$rows = [];
-foreach ($cart as $key => $item) {
-    $stmt = $pdo->prepare("SELECT name, price FROM shoes WHERE id = ?");
-    $stmt->execute([$item["shoe_id"]]);
-    $shoe = $stmt->fetch();
-    if (!$shoe) {
-        continue;
+if (!empty($cart)) {
+    // Pull current name + price for everything in the cart in one query.
+    $shoeIds = array_values(array_unique(array_map(fn($l) => (int) $l["shoe_id"], $cart)));
+    $placeholders = implode(",", array_fill(0, count($shoeIds), "?"));
+
+    $stmt = $pdo->prepare("SELECT id, name, price FROM shoes WHERE id IN ($placeholders)");
+    $stmt->execute($shoeIds);
+
+    $shoeInfo = [];
+    foreach ($stmt->fetchAll() as $s) {
+        $shoeInfo[(int) $s["id"]] = $s;
     }
 
-    $subtotal = $shoe["price"] * $item["quantity"];
-    $total += $subtotal;
+    foreach ($cart as $key => $line) {
+        $id = (int) $line["shoe_id"];
+        if (!isset($shoeInfo[$id])) {
+            continue; // shoe was deleted from catalog
+        }
+        $price = (float) $shoeInfo[$id]["price"];
+        $qty = (int) $line["quantity"];
+        $subtotal = $price * $qty;
+        $total += $subtotal;
 
-    $rows[] = [
-        "key"      => $key,
-        "name"     => $shoe["name"],
-        "size"     => $item["size"],
-        "price"    => $shoe["price"],
-        "quantity" => $item["quantity"],
-        "subtotal" => $subtotal,
-    ];
+        $rows[] = [
+            "key"      => $key,
+            "name"     => $shoeInfo[$id]["name"],
+            "size"     => (int) $line["size"],
+            "price"    => $price,
+            "quantity" => $qty,
+            "subtotal" => $subtotal,
+        ];
+    }
 }
 ?>
 <!DOCTYPE html>
@@ -54,7 +65,7 @@ foreach ($cart as $key => $item) {
         body { font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }
         .container { max-width: 900px; margin: auto; background: white; padding: 25px; border-radius: 10px; }
         .top-links { margin: 20px 0; }
-        .top-links a { margin-right: 15px; color: #111; font-weight: bold; }
+        .top-links a { margin-right: 15px; color: #111; font-weight: bold; text-decoration: none; }
         table { width: 100%; border-collapse: collapse; margin-top: 20px; }
         th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
         th { background: #111; color: white; }
@@ -87,9 +98,9 @@ foreach ($cart as $key => $item) {
                 <?php foreach ($rows as $row): ?>
                     <tr>
                         <td><?= htmlspecialchars($row["name"]) ?></td>
-                        <td><?= htmlspecialchars($row["size"]) ?></td>
+                        <td>US <?= $row["size"] ?></td>
                         <td>$<?= number_format($row["price"], 2) ?></td>
-                        <td><?= (int) $row["quantity"] ?></td>
+                        <td><?= $row["quantity"] ?></td>
                         <td>$<?= number_format($row["subtotal"], 2) ?></td>
                         <td><a href="cart.php?remove=<?= urlencode($row["key"]) ?>">Remove</a></td>
                     </tr>

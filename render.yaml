@@ -1,0 +1,28 @@
+# Render Blueprint for ShowtimeSneakers.
+# Push this repo to GitHub, then in Render choose "New +" -> "Blueprint"
+# and point it at your repo. Fill in the DB_* values from your hosted MySQL
+# (e.g. Aiven) under the service's Environment settings.
+services:
+  - type: web
+    name: showtime-sneakers
+    runtime: docker
+    plan: free
+    envVars:
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        value: "3306"
+      - key: DB_NAME
+        sync: false
+      - key: DB_USER
+        sync: false
+      - key: DB_PASS
+        sync: false
+      - key: DB_SSL
+        value: "true"
+      - key: STORE_EMAIL
+        sync: false
+      - key: ADMIN_USER
+        value: IR247
+      - key: ADMIN_PASS
+        value: ADMIN123$

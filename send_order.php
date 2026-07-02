@@ -4,7 +4,6 @@ require_once "db.php";
 
 $cart = $_SESSION["cart"] ?? [];
 
-// Must arrive via POST with a non-empty cart.
 if ($_SERVER["REQUEST_METHOD"] !== "POST" || empty($cart)) {
     header("Location: index.php");
     exit;
@@ -16,122 +15,137 @@ $phone   = trim($_POST["phone"] ?? "");
 $address = trim($_POST["address"] ?? "");
 
 if ($name === "" || $email === "" || $address === "") {
-    die("Please complete all checkout fields.");
+    die("Please complete all required checkout fields.");
 }
 
-$order_id = null;
 $errorMessage = "";
-$orderRows = [];   // for the confirmation display + email
+$orderId = null;
 $total = 0;
+$orderLines = [];
 
 try {
     $pdo->beginTransaction();
 
-    // 1) Re-price and stock-check every line against the DB, locking
-    //    each shoe_size row so two orders can't oversell the same size.
-    foreach ($cart as $item) {
-        $shoeId = (int) $item["shoe_id"];
-        $size   = $item["size"];
-        $qty    = (int) $item["quantity"];
+    // Lock the relevant size rows so two shoppers can't oversell the last pair.
+    $lookup = $pdo->prepare("
+        SELECT ss.id AS size_id, ss.stock, s.id AS shoe_id, s.name, s.price
+        FROM shoe_sizes ss
+        JOIN shoes s ON s.id = ss.shoe_id
+        WHERE ss.shoe_id = ? AND ss.size = ?
+        FOR UPDATE
+    ");
 
-        $stmt = $pdo->prepare("
-            SELECT shoe_sizes.id AS size_id, shoe_sizes.stock, shoes.name, shoes.price
-            FROM shoe_sizes
-            JOIN shoes ON shoes.id = shoe_sizes.shoe_id
-            WHERE shoe_sizes.shoe_id = ? AND shoe_sizes.size = ?
-            FOR UPDATE
-        ");
-        $stmt->execute([$shoeId, $size]);
-        $row = $stmt->fetch();
+    // First pass: validate everything is still in stock.
+    foreach ($cart as $line) {
+        $shoeId = (int) $line["shoe_id"];
+        $size   = (int) $line["size"];
+        $qty    = (int) $line["quantity"];
+
+        $lookup->execute([$shoeId, $size]);
+        $row = $lookup->fetch();
 
         if (!$row) {
-            throw new Exception("A shoe in your cart is no longer available.");
+            throw new Exception("A product in your cart is no longer available.");
         }
-        if ($qty > (int) $row["stock"]) {
-            throw new Exception("Not enough stock for {$row['name']} size {$size} (only {$row['stock']} left).");
+        if ($qty < 1) {
+            throw new Exception("Invalid quantity in cart.");
+        }
+        if ((int) $row["stock"] < $qty) {
+            throw new Exception(
+                $row["name"] . " (Size " . $size . ") only has " . (int) $row["stock"] . " left in stock."
+            );
         }
 
-        $subtotal = $row["price"] * $qty;
-        $total   += $subtotal;
-
-        $orderRows[] = [
-            "size_id"   => $row["size_id"],
-            "shoe_id"   => $shoeId,
+        $subtotal = (float) $row["price"] * $qty;
+        $total += $subtotal;
+        $orderLines[] = [
+            "size_id"   => (int) $row["size_id"],
+            "shoe_id"   => (int) $row["shoe_id"],
             "shoe_name" => $row["name"],
             "size"      => $size,
             "quantity"  => $qty,
-            "price"     => $row["price"],
+            "price"     => (float) $row["price"],
             "subtotal"  => $subtotal,
         ];
     }
 
-    // 2) Create the order header.
+    // Create the order.
     $insertOrder = $pdo->prepare("
         INSERT INTO orders (customer_name, customer_email, customer_phone, address, total, status)
         VALUES (?, ?, ?, ?, ?, 'Active')
     ");
     $insertOrder->execute([$name, $email, $phone, $address, $total]);
-    $order_id = (int) $pdo->lastInsertId();
+    $orderId = (int) $pdo->lastInsertId();
 
-    // 3) Insert line items and decrement that specific size's stock.
+    // Insert items + decrement stock.
     $insertItem = $pdo->prepare("
-        INSERT INTO order_items (order_id, shoe_id, shoe_name, size, quantity, price, subtotal)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO order_items (order_id, shoe_id, shoe_name, size, quantity, subtotal)
+        VALUES (?, ?, ?, ?, ?, ?)
     ");
-    $reduceStock = $pdo->prepare("
-        UPDATE shoe_sizes SET stock = stock - ? WHERE id = ?
-    ");
+    $decrement = $pdo->prepare("UPDATE shoe_sizes SET stock = stock - ? WHERE id = ?");
 
-    foreach ($orderRows as $r) {
+    foreach ($orderLines as $item) {
         $insertItem->execute([
-            $order_id, $r["shoe_id"], $r["shoe_name"],
-            $r["size"], $r["quantity"], $r["price"], $r["subtotal"],
+            $orderId, $item["shoe_id"], $item["shoe_name"],
+            $item["size"], $item["quantity"], $item["subtotal"],
         ]);
-        $reduceStock->execute([$r["quantity"], $r["size_id"]]);
+        $decrement->execute([$item["quantity"], $item["size_id"]]);
     }
 
     $pdo->commit();
-
 } catch (Exception $e) {
-    $pdo->rollBack();
+    if ($pdo->inTransaction()) {
+        $pdo->rollBack();
+    }
     $errorMessage = $e->getMessage();
 }
 
-// If the order failed, stop here and show why (cart is preserved).
+// If anything went wrong, show it and stop (cart is preserved).
 if ($errorMessage !== "") {
-    echo "<p style='font-family:Arial;color:#b00020;'>Order could not be placed: "
-        . htmlspecialchars($errorMessage)
-        . "</p><p><a href='cart.php'>Return to cart</a></p>";
+    ?>
+    <!DOCTYPE html>
+    <html lang="en"><head><meta charset="UTF-8"><title>Order Problem</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }
+        .container { max-width: 700px; margin: auto; background: white; padding: 25px; border-radius: 10px; }
+        .error { background: #ffe7e7; padding: 15px; border: 1px solid #d18a8a; border-radius: 8px; }
+        a { color: #111; font-weight: bold; }
+    </style></head><body>
+    <div class="container">
+        <h1>We couldn't complete your order</h1>
+        <div class="error"><p><?= htmlspecialchars($errorMessage) ?></p></div>
+        <p>Your cart has been kept. <a href="cart.php">Return to cart</a> to adjust it.</p>
+    </div></body></html>
+    <?php
     exit;
 }
 
-// ------------------------------------------------------------
-//  Build the confirmation email
-// ------------------------------------------------------------
-$order_details  = "New Showtime Sneakers Order (#$order_id)\n\n";
-$order_details .= "Customer Name: $name\n";
-$order_details .= "Customer Email: $email\n";
-$order_details .= "Customer Phone: $phone\n";
-$order_details .= "Shipping Address: $address\n\n";
+// Build a readable confirmation / email body.
+$order_details  = "New Showtime Sneakers Order (#$orderId)\n\n";
+$order_details .= "Customer Name: " . $name . "\n";
+$order_details .= "Customer Email: " . $email . "\n";
+$order_details .= "Customer Phone: " . ($phone !== "" ? $phone : "N/A") . "\n";
+$order_details .= "Shipping Address: " . $address . "\n\n";
 $order_details .= "Order Items:\n";
-
-foreach ($orderRows as $r) {
-    $order_details .= "- {$r['shoe_name']} | Size: {$r['size']} | Qty: {$r['quantity']}"
-        . " | Price: $" . number_format($r["price"], 2)
-        . " | Subtotal: $" . number_format($r["subtotal"], 2) . "\n";
+foreach ($orderLines as $item) {
+    $order_details .= "- " . $item["shoe_name"]
+        . " | Size: " . $item["size"]
+        . " | Qty: " . $item["quantity"]
+        . " | Price: $" . number_format($item["price"], 2)
+        . " | Subtotal: $" . number_format($item["subtotal"], 2) . "\n";
 }
 $order_details .= "\nTotal: $" . number_format($total, 2) . "\n";
 
-// Change this to your own email address.
-$to = "your-email@example.com";
-$subject = "New Showtime Sneakers Order #$order_id";
-$headers  = "From: no-reply@showtimesneakers.com\r\n";
+// Send confirmation email to the store owner. Configure STORE_EMAIL as an env var.
+$to = getenv("STORE_EMAIL") ?: "your-email@example.com";
+$subject = "New Showtime Sneakers Order #$orderId";
+$headers = "From: no-reply@showtimesneakers.com\r\n";
 $headers .= "Reply-To: " . $email . "\r\n";
 
-// NOTE: PHP mail() may not work on local XAMPP unless SMTP is configured.
+// mail() won't work on XAMPP/Render without an SMTP setup; we degrade gracefully.
 $email_sent = @mail($to, $subject, $order_details, $headers);
 
-// Order is safely in the DB, so clear the cart.
+// Order is safely in the DB — clear the cart.
 unset($_SESSION["cart"]);
 ?>
 <!DOCTYPE html>
@@ -154,15 +168,16 @@ unset($_SESSION["cart"]);
         <h1>Order Confirmation</h1>
 
         <div class="success">
-            <p>Thank you, <?= htmlspecialchars($name) ?>. Your order <strong>#<?= (int) $order_id ?></strong> has been placed and inventory has been updated.</p>
+            <p>Thank you, <?= htmlspecialchars($name) ?>. Your order <strong>#<?= $orderId ?></strong> has been placed and saved.</p>
         </div>
 
         <?php if ($email_sent): ?>
             <p>A confirmation email was sent to the store owner.</p>
         <?php else: ?>
             <div class="warning">
-                <p>The order was saved to the database, but the email may not have sent because local XAMPP usually needs SMTP setup.</p>
-                <p>For class/demo purposes, the order details are displayed below.</p>
+                <p>The order was saved to the database, but the confirmation email could not be sent
+                   (local XAMPP and most cloud hosts need SMTP configured for PHP's mail()).</p>
+                <p>Order details are shown below.</p>
             </div>
         <?php endif; ?>
 
