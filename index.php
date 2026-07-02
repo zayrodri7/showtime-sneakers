@@ -37,14 +37,14 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["shoe_id"], $_POST["si
 
         $current = $_SESSION["cart"][$key]["quantity"] ?? 0;
         if ($current + 1 > (int) $row["stock"]) {
-            $error = "You already have the maximum available quantity of that size in your cart.";
+            $error = "Only " . (int) $row["stock"] . " left of that size — that's already the max in your cart.";
         } else {
             $_SESSION["cart"][$key] = [
                 "shoe_id"  => $shoeId,
                 "size"     => $size,
                 "quantity" => $current + 1,
             ];
-            $message = $row["name"] . " (Size " . $size . ") was added to your cart.";
+            $message = $row["name"] . " (Size US " . $size . ") was added to your cart.";
         }
     }
 }
@@ -59,7 +59,8 @@ $shoes = $pdo->query("
     ORDER BY s.name ASC
 ")->fetchAll();
 
-// Load available (in-stock) sizes per shoe.
+// Load every size row (including out-of-stock) so customers can see the full
+// size run and exactly how many pairs are left in each size.
 $sizeStmt = $pdo->query("
     SELECT shoe_id, size, stock
     FROM shoe_sizes
@@ -90,12 +91,21 @@ foreach ($_SESSION["cart"] ?? [] as $line) {
         .top-links a { margin-right: 15px; color: #111; font-weight: bold; text-decoration: none; }
         .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 18px; }
         .product { border: 1px solid #ddd; padding: 15px; border-radius: 8px; display: flex; flex-direction: column; }
-        .product img { width: 100%; height: 170px; object-fit: contain; background: #fafafa; border-radius: 6px; }
+        .product img { width: 100%; height: 180px; object-fit: contain; background: #fafafa; border-radius: 6px; }
         .product h2 { font-size: 1.05rem; margin: 12px 0 4px; }
         .brand { color: #666; font-size: .85rem; margin: 0 0 6px; }
         .price { font-weight: bold; margin: 4px 0; }
-        .available { color: green; font-weight: bold; }
-        .unavailable { color: #b00020; font-weight: bold; }
+        .available { color: green; font-weight: bold; margin: 4px 0; }
+        .unavailable { color: #b00020; font-weight: bold; margin: 4px 0; }
+
+        /* Per-size stock display */
+        .stock-title { font-size: .8rem; color: #555; margin: 10px 0 6px; text-transform: uppercase; letter-spacing: .04em; }
+        .sizes { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+        .chip { font-size: .78rem; border: 1px solid #ccc; border-radius: 6px; padding: 4px 7px; background: #f7f7f7; white-space: nowrap; }
+        .chip .n { font-weight: bold; }
+        .chip.low { border-color: #e0a800; background: #fff8e6; }
+        .chip.out { border-color: #e2c2c2; background: #fbeaea; color: #a33; text-decoration: line-through; }
+
         .add-row { margin-top: auto; display: flex; gap: 8px; padding-top: 10px; }
         select { padding: 9px; border: 1px solid #ccc; border-radius: 6px; flex: 1; }
         button { padding: 10px 14px; background: #111; color: white; border: none; border-radius: 6px; cursor: pointer; }
@@ -125,13 +135,22 @@ foreach ($_SESSION["cart"] ?? [] as $line) {
         <div class="grid">
             <?php foreach ($shoes as $shoe): ?>
                 <?php
-                $inStock = (int) $shoe["total_stock"] > 0;
+                $totalStock = (int) $shoe["total_stock"];
+                $inStock = $totalStock > 0;
                 $sizes = $sizesByShoe[$shoe["id"]] ?? [];
+
+                // Root-relative path so the image resolves no matter what URL the
+                // page is served from. Leave external URLs untouched.
+                $imgPath = $shoe["image"] ?: "";
+                if ($imgPath !== "" && $imgPath[0] !== "/" && strpos($imgPath, "http") !== 0) {
+                    $imgPath = "/" . ltrim($imgPath, "/");
+                }
                 ?>
                 <div class="product">
-                    <img src="<?= htmlspecialchars($shoe["image"] ?? "") ?>"
+                    <img src="<?= htmlspecialchars($imgPath) ?>"
                          alt="<?= htmlspecialchars($shoe["name"]) ?>"
-                         onerror="this.src='data:image/svg+xml;utf8,<?= rawurlencode('<svg xmlns="http://www.w3.org/2000/svg" width="260" height="170"><rect width="100%" height="100%" fill="#eee"/><text x="50%" y="50%" font-family="Arial" font-size="14" fill="#999" text-anchor="middle" dominant-baseline="middle">No image</text></svg>') ?>'">
+                         loading="lazy"
+                         onerror="this.onerror=null;this.src='data:image/svg+xml;utf8,<?= rawurlencode('<svg xmlns="http://www.w3.org/2000/svg" width="260" height="180"><rect width="100%" height="100%" fill="#eee"/><text x="50%" y="50%" font-family="Arial" font-size="14" fill="#999" text-anchor="middle" dominant-baseline="middle">No image</text></svg>') ?>'">
 
                     <h2><?= htmlspecialchars($shoe["name"]) ?></h2>
                     <p class="brand"><?= htmlspecialchars($shoe["brand"] ?? "") ?></p>
@@ -139,22 +158,52 @@ foreach ($_SESSION["cart"] ?? [] as $line) {
 
                     <?php if ($inStock): ?>
                         <p class="available">In Stock</p>
+                    <?php else: ?>
+                        <p class="unavailable">Out of Stock</p>
+                    <?php endif; ?>
+
+                    <!-- Always-visible per-size stock counts -->
+                    <?php if (!empty($sizes)): ?>
+                        <div class="stock-title">Stock by size</div>
+                        <div class="sizes">
+                            <?php foreach ($sizes as $s): ?>
+                                <?php
+                                $qty = (int) $s["stock"];
+                                if ($qty === 0) {
+                                    $cls = "out";  $label = "Sold out";
+                                } elseif ($qty <= 2) {
+                                    $cls = "low";  $label = "Only " . $qty . " left";
+                                } else {
+                                    $cls = "";     $label = "In stock";
+                                }
+                                ?>
+                                <span class="chip <?= $cls ?>">
+                                    <span class="n">US <?= (int) $s["size"] ?></span> — <?= $label ?>
+                                </span>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
+
+                    <?php if ($inStock): ?>
                         <form method="POST" action="index.php" class="add-row">
                             <input type="hidden" name="shoe_id" value="<?= (int) $shoe["id"] ?>">
                             <select name="size" required>
-                                <option value="" disabled selected>Size</option>
+                                <option value="" disabled selected>Choose size</option>
                                 <?php foreach ($sizes as $s): ?>
-                                    <?php if ((int) $s["stock"] > 0): ?>
-                                        <option value="<?= (int) $s["size"] ?>">
-                                            US <?= (int) $s["size"] ?>
-                                        </option>
-                                    <?php endif; ?>
+                                    <?php
+                                    $qty = (int) $s["stock"];
+                                    if ($qty === 0)      { $optLabel = " — sold out"; }
+                                    elseif ($qty <= 2)   { $optLabel = " — only " . $qty . " left"; }
+                                    else                 { $optLabel = ""; }
+                                    ?>
+                                    <option value="<?= (int) $s["size"] ?>" <?= $qty === 0 ? "disabled" : "" ?>>
+                                        US <?= (int) $s["size"] ?><?= $optLabel ?>
+                                    </option>
                                 <?php endforeach; ?>
                             </select>
                             <button type="submit">Add to Cart</button>
                         </form>
                     <?php else: ?>
-                        <p class="unavailable">Out of Stock</p>
                         <div class="add-row">
                             <button disabled>Unavailable</button>
                         </div>
